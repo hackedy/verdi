@@ -274,6 +274,30 @@ Section StepAsync.
   Definition step_m_star := refl_trans_1n_trace step_m.
 End StepAsync.
 
+Section StepSync.
+
+  Context `{params : MultiParams}.
+
+  Inductive step_s : step_relation network (name * (input + list output)) :=
+  (* just like step_m *)
+  | SS_deliver : forall net net' p xs ys out d l,
+                     nwPackets net = xs ++ p :: ys ->
+                     ~ In (pDst p) (map pDst ys) ->
+                     net_handlers (pDst p) (pSrc p) (pBody p) (nwState net (pDst p)) = (out, d, l) ->
+                     net' = mkNetwork (send_packets (pDst p) l ++ xs ++ ys)
+                                      (update (nwState net) (pDst p) d) ->
+                     step_s net net' [(pDst p, inr out)]
+  (* inject a message (f inp) into host h *)
+  | SS_input : forall h net net' out inp d l,
+                   input_handlers h inp (nwState net h) = (out, d, l) ->
+                   net' = mkNetwork (send_packets h l ++ nwPackets net)
+                                    (update (nwState net) h d) ->
+                   step_s net net' [(h, inl inp); (h, inr out)].
+
+  Definition step_s_star := refl_trans_1n_trace step_s.
+
+End StepSync.
+
 Arguments update _ _ _ _ _ _ / _.
 Arguments send_packets _ _ _ _ /.
 
