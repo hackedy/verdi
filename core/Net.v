@@ -8,6 +8,7 @@ Require Import Relations.Relation_Operators.
 Require Import Relations.Operators_Properties.
 Require Import Util.
 Require Import VerdiTactics.
+Require Import Sumbool.
 
 Set Implicit Arguments.
 
@@ -274,29 +275,47 @@ Section StepAsync.
   Definition step_m_star := refl_trans_1n_trace step_m.
 End StepAsync.
 
-Section StepSync.
+Section StepFifo.
 
   Context `{params : MultiParams}.
 
-  Inductive step_s : step_relation network (name * (input + list output)) :=
+  Record fifoNetwork := mkFifoNetwork {
+        (* source -> destination -> list of packets *)
+        nwfPackets : name -> name -> list msg;
+        nwfState : name -> data
+  }.
+
+  Definition fifoUpdate {A : Type} f src dst (v : A) :=
+    fun src' dst' =>
+      if sumbool_and _ _ _ _ (name_eq_dec src' src) (name_eq_dec dst' dst)
+      then v else f src' dst'.
+
+  Fixpoint scatter_msgs (src : name) (ms : list (name * msg)) (f : (name -> name -> list msg)) : (name -> name -> list msg) :=
+    match ms with
+    | ((dst, m) :: rest) => scatter_msgs src rest (fifoUpdate f src dst (f src dst ++ [m]))
+    | [] => f
+    end.
+
+
+  Inductive step_fifo : step_relation fifoNetwork (name * (input + list output)) :=
   (* just like step_m *)
-  | SS_deliver : forall net net' p xs ys out d l,
-                     nwPackets net = xs ++ p :: ys ->
-                     ~ In (pDst p) (map pDst ys) ->
-                     net_handlers (pDst p) (pSrc p) (pBody p) (nwState net (pDst p)) = (out, d, l) ->
-                     net' = mkNetwork (send_packets (pDst p) l ++ xs ++ ys)
-                                      (update (nwState net) (pDst p) d) ->
-                     step_s net net' [(pDst p, inr out)]
+  | SFF_deliver : forall net net' m ms out d l src dst,
+                     nwfPackets net src dst = m :: ms ->
+                     net_handlers dst src m (nwfState net dst) = (out, d, l) ->
+                     net' = mkFifoNetwork (scatter_msgs dst l
+                                                        (fifoUpdate (nwfPackets net) src dst ms))
+                                          (update (nwfState net) dst d) ->
+                     step_fifo net net' [(dst, inr out)]
   (* inject a message (f inp) into host h *)
-  | SS_input : forall h net net' out inp d l,
-                   input_handlers h inp (nwState net h) = (out, d, l) ->
-                   net' = mkNetwork (send_packets h l ++ nwPackets net)
-                                    (update (nwState net) h d) ->
-                   step_s net net' [(h, inl inp); (h, inr out)].
+  | SFF_input : forall h net net' out inp d l,
+                   input_handlers h inp (nwfState net h) = (out, d, l) ->
+                   net' = mkFifoNetwork (scatter_msgs h l (nwfPackets net))
+                                        (update (nwfState net) h d) ->
+                   step_fifo net net' [(h, inl inp); (h, inr out)].
 
-  Definition step_s_star := refl_trans_1n_trace step_s.
+  Definition step_fifo_star := refl_trans_1n_trace step_fifo.
 
-End StepSync.
+End StepFifo.
 
 Arguments update _ _ _ _ _ _ / _.
 Arguments send_packets _ _ _ _ /.
